@@ -2,100 +2,71 @@ import requests
 import json
 from bs4 import BeautifulSoup as bs
 
-class OpenSubtitles:
-
+class Subscene:
     def __init__(self):
-        self.url = "https://www.opensubtitles.org/"
-
-        with open("languages.json", "r") as f:
+        with open("subscene_languages.json", "r") as f:
             self.languages = json.loads(f.read())
+        self.url = "https://subscene.com/"
 
-    def _search_php(self, search, lang):
-        """Search for subtitles ids from a movie title using the suggestion
-        private API (safest solution).
+    def search(self, name, language=""):
+        name = "+".join(name.split())
 
-        Args:
-            search (str): the movie title
-            lang (str): language keycode (see language.json)
-        Returns:
-            result: a list of matching results containing names and ids or
-            returns None if nothing is found.
-        """
-
-        data = {
-                "format":"json3",
-                "MovieName":search,
-                "SubLanguageID":lang
+        payload = {
+                "query":name,
+                "l":"",
                 }
 
-        try:
-            result = requests.get("https://opensubtitles.org/libs/suggest.php", params=data)
-            result = json.loads(result.text)
-        except:
-            result = None
+        url = self.url + "/subtitles/searchbytitle"
+        results = requests.post(url, data=payload)
+        results = bs(results.text, "lxml")
 
-        return result
+        search_results = dict()
+        titles = results.find_all("div", {"class":"title"})
+        for title in titles:
+            name = title.find("a").text
+            partial_url = title.find("a").attrs["href"].split("/")[-1]
 
-    def _search_html(self, search, lang):
-        """Search for subtitles ids from a movie title by analyzing the html
-        response from the website.
+            search_results[name] = partial_url
 
-        Args:
-            search (str): the movie title
-            lang (str): language keycode (see language.json)
-        Returns:
-            result: a list of matching results containing names and ids or
-            returns None if nothing is found.
-        """
+        return search_results
 
-        search = "+".join(search.split())
-        url = self.url + "search2/sublanguageid-" + lang + "/moviename-" + search
-        html = requests.get(url)
-        html = bs(html.text, "lxml")
+    def _available_subtitles(self, name, language):
 
-        trs = html.find("table", {"id":"search_results"}).find("tbody").find_all("tr")
+        url = self.url + "subtitles/" + name
 
-        movies = list()
+        if language:
+            if not language in self.languages.keys():
+                raise Exception("Wrong language")
+            language = self.languages[language]
 
-        for tr in trs:
-            try:
-                if "name" in tr.get("id"):
-                    id = tr.get("id")[4:]
-                    name, year = tuple(tr.find("strong").find("a").text.split("\n"))
-                    year = year[1:-1]
-                    movies.append({
-                        "name":name,
-                        "year":year,
-                        "id":id,
-                    })
+        cookie = {"LanguageFilter":language}
+        html = bs(requests.get(url, cookies=cookie).text, "lxml")
 
-            except TypeError:
-                    pass
+        subtitles = html.find("tbody").find_all("tr")
+        
+        reformat = lambda string : " ".join(string.split())
 
-        if movies:
-            return movies
-        else:
-            return None
+        infos = dict()
 
+        for sub in subtitles:
+            a = sub.find("td", {"class":"a1"}).find("a")
+            spans = a.find_all("span")
 
-    def search(self, search, lang="eng"):
-        """
-        Search for informations (ids) about a movie
+            id = a.attrs["href"].split("/")[-1]
+            name = reformat(spans[1].text)
+            language = a.attrs["href"].split("/")[-2]
+            state = spans[0].attrs["class"][2][:-5]
 
-        Args:
-            search (str): the movie title
-            lang (str) (optional): language keycode (see language.json)
-        Returns:
-            result (list): matching information about the title.
-        """
-
-        if not lang in self.languages.keys():
-            raise Exception("Wrong country code.")
-
-        infos = self._search_html(search, lang)
-        if not infos:
-            infos = self._search_php(search, lang)
-        if not infos:
-            raise Exception("Unable to fetch any information about this movie.")
+            if infos.__contains__(id): # multiple names can have the same id
+                infos[id][0].append(name)
+            else:
+                infos[id] = [name], language, state
 
         return infos
+
+
+test = Subscene()
+
+print(test.search("the lord of the ring","french"))
+
+# https://subscene.com/subtitles/the-lord-of-the-rings-the-fellowship-of-the-ring/french/1314014
